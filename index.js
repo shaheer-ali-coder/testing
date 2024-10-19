@@ -1,3 +1,4 @@
+const port = 80
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
