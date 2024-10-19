@@ -262,3 +262,13 @@ app.post('/confirmation', (req, res) => {
 
   res.status(200).send('OK');
 });
+
+
+app.get('/', (req, res) => {
+  res.send('Hello, World!');
+});
+
+// Start the server and listen on the specified port
+app.listen(port, () => {
+  console.log(`Server is running on http://localhost:${port}`);
+});
