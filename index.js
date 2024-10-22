@@ -193,50 +193,80 @@ if (paymentId) {
     });
 }
 app.get('/confirmation', async (req, res) => {
-    const { paymentId } = req.query;  // Retrieve the paymentId from the query string
+    const { paymentId, PayerID } = req.query;  // Retrieve paymentId and PayerID from query
+
+    if (!paymentId || !PayerID) {
+        return res.status(400).send('Missing payment information.');
+    }
+
+    // Find the chatId by matching the paymentId
     const chatId = Object.keys(users).find(chatId => users[chatId].paymentId === paymentId);
 
-    if (chatId) {
-        const userPlan = users[chatId].paymentPlan;
-        users[chatId].paymentStatus = true;  // Mark payment as completed
-        users[chatId].lastPaymentDate = new Date();
+    if (!chatId) {
+        return res.status(404).send('User not found.');
+    }
 
-        try {
-            // Create a Telegram group invite link valid for one user
-            const inviteLink = await bot.createChatInviteLink(groupId, {
-                member_limit: 1,
-                expire_date: Math.floor(Date.now() / 1000) + (60 * 60) // 1 hour expiry
-            });
+    // Define the details to execute the payment
+    const execute_payment_json = {
+        "payer_id": PayerID,
+        "transactions": [{
+            "amount": {
+                "currency": "USD",
+                "total": users[chatId].paymentPlan.price
+            }
+        }]
+    };
 
-            // Render the confirmation page
-            res.send(`
-                <html>
-                    <head>
-                        <title>Payment Confirmation</title>
-                        <style>
-                            body { font-family: Arial, sans-serif; }
-                            .container { max-width: 600px; margin: 0 auto; text-align: center; padding: 20px; }
-                            h1 { color: #4CAF50; }
-                            p { font-size: 18px; }
-                            a { display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <h1>Payment Confirmed!</h1>
-                            <p>Thank you for your payment. You have subscribed to the <strong>${userPlan}</strong> plan.</p>
-                            <p>Click the button below to join the Telegram group.</p>
-                            <a href="${inviteLink.invite_link}" target="_blank">Join Group</a>
-                        </div>
-                    </body>
-                </html>
-            `);
-        } catch (error) {
-            console.error("Error creating invite link:", error);
-            res.status(500).send("Error generating invite link.");
+    // Execute the payment via PayPal API
+    paypal.payment.execute(paymentId, execute_payment_json, async (error, payment) => {
+        if (error) {
+            console.error(error);
+            return res.status(500).send('Error executing payment.');
+        } else {
+            if (payment.state === 'approved') {
+                // Payment is successful, now mark the user as paid
+                users[chatId].paymentStatus = true;
+                users[chatId].lastPaymentDate = new Date();
+
+                try {
+                    // Create a Telegram group invite link valid for one user
+                    const inviteLink = await bot.createChatInviteLink(groupId, {
+                        member_limit: 1,
+                        expire_date: Math.floor(Date.now() / 1000) + (60 * 60) // 1 hour expiry
+                    });
+
+                    // Render the confirmation page
+                    return res.send(`
+                        <html>
+                            <head>
+                                <title>Payment Confirmation</title>
+                                <style>
+                                    body { font-family: Arial, sans-serif; }
+                                    .container { max-width: 600px; margin: 0 auto; text-align: center; padding: 20px; }
+                                    h1 { color: #4CAF50; }
+                                    p { font-size: 18px; }
+                                    a { display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; }
+                                </style>
+                            </head>
+                            <body>
+                                <div class="container">
+                                    <h1>Payment Confirmed!</h1>
+                                    <p>Thank you for your payment. You have subscribed to the <strong>${users[chatId].paymentPlan.duration}</strong> plan.</p>
+                                    <p>Click the button below to join the Telegram group.</p>
+                                    <a href="${inviteLink.invite_link}" target="_blank">Join Group</a>
+                                </div>
+                            </body>
+                        </html>
+                    `);
+                } catch (error) {
+                    console.error("Error creating invite link:", error);
+                    return res.status(500).send("Error generating invite link.");
+                }
+            } else {
+                return res.status(400).send('Payment not approved.');
+            }
         }
-    } 
-    
+    });
 });
 app.get('/cancel', (req, res) => {
     res.send(`
