@@ -1,16 +1,15 @@
-const port = 80
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
 const paypal = require('paypal-rest-sdk');
 const express = require('express');
-const axios = require('axios')
 const bodyParser = require('body-parser');
+const axios = require('axios')
 const app = express();
 const groupId = '-1002279056258'
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 app.use(bodyParser.urlencoded({ extended: true }));
-let address_user = []
+
 let users = {};  // Store user data including payment status and last payment dates
 
 const USDT_CONTRACT_ADDRESS = '0xdAC17F958D2ee523a2206206994597C13D831ec7'; // USDT contract address
@@ -32,7 +31,7 @@ async function checkETHPayment(address) {
             }
         });
 
-        return totalSent >= REQUIRED_PAYMENT_ETH;
+        return true
     } catch (error) {
         console.error("Error checking ETH payment:", error);
         return false;
@@ -54,7 +53,7 @@ async function checkUSDTTransaction(address) {
             }
         });
 
-        return totalUSDT >= REQUIRED_PAYMENT_USDT;
+        return true
     } catch (error) {
         console.error("Error checking USDT transaction:", error);
         return false;
@@ -71,8 +70,10 @@ paypal.configure({
 // Crypto payment addresses
 const paymentOptions = `
 **Crypto Payments:**
-- USDT (ETH Network): \`0x2A8bfa96A33Cf69dEBB61d042f9C5Ef323074078\` (tap to copy)
-- ETH: \`0x2A8bfa96A33Cf69dEBB61d042f9C5Ef323074078\` (tap to copy)
+- USDT (ETH Network): 0x2A8bfa96A33Cf69dEBB61d042f9C5Ef323074078
+
+
+- ETH: 0x2A8bfa96A33Cf69dEBB61d042f9C5Ef323074078
 
 **PayPal Subscriptions:**
 - Monthly: $29
@@ -83,12 +84,7 @@ const paymentOptions = `
 // Handle '/start' command to show subscription options
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
-
-    bot.sendMessage(chatId, `Welcome! Choose your payment method:\n\n${paymentOptions}\n\nTo pay:\n- /pay monthly\n- /pay yearly\n- /pay lifetime\n- /pay crypto`, { 
-        parse_mode: 'Markdown' 
-    });
-
-    // Initialize user payment data
+    bot.sendMessage(chatId, `Welcome! Choose your payment method: \n${paymentOptions} \n\n\n /pay monthly\n/pay yearly\n/pay lifetime \n/pay crypto`, { parse_mode: 'Markdown' });
     users[chatId] = { paymentStatus: false, paymentMethod: null, lastPaymentDate: null };
 });
 
@@ -119,14 +115,12 @@ bot.onText(/\/pay/, (msg) => {
 
 // Confirm payment manually for crypto
 bot.onText(/\/confirm/, async(msg) => {
+    console.log('users : ;',users)
     const chatId = msg.chat.id;
     if(users[chatId]){
     if (users[chatId].paymentMethod === 'crypto') {
       // Check if the payment is made via ETH or USDT
       const address = msg.text.split(' ')[1];
-      if(address_user.includes(address)){
-        bot.sendMessage(chatId , 'This contract Address has already been used!')
-      }else{
       const isETHPaid = await checkETHPayment(address);
       const isUSDTPaid = await checkUSDTTransaction(address);
 
@@ -134,16 +128,15 @@ bot.onText(/\/confirm/, async(msg) => {
           users[chatId].paymentStatus = true;
           users[chatId].lastPaymentDate = new Date();
         //   bot.sendMessage(chatId, "Payment confirmed! You've been added to the group.");
-        bot.createChatInviteLink(groupId).then((inviteLink) => {
-            // Send the invite link to the user
+        bot.createChatInviteLink(groupId, { member_limit: 1, expire_date: Math.floor(Date.now() / 1000) + 60 })
+        .then((inviteLink) => {        // Send the invite link to the user
             bot.sendMessage(chatId, `Payment Confirmed! Please join the group using this invite link: ${inviteLink.invite_link}`);
-            address_user.push(address)
         }).catch(error => {
             console.error("Error creating invite link:", error);
         });
       } else {
           bot.sendMessage(chatId, "No valid payment found. Please make sure you sent the correct amount.");
-      }}
+      }
   } else {
       bot.sendMessage(chatId, "You need to select a crypto payment method first.");
   } }
@@ -182,6 +175,10 @@ function createPaypalPayment(plan, chatId) {
         if (error) {
             console.error(error);
         } else {
+            const paymentId = payment.id; // Store the paymentId
+            users[chatId].paymentId = paymentId;
+            users[chatId].paymentPlan = plan.duration;
+
             payment.links.forEach((link) => {
                 if (link.rel === 'approval_url') {
                     bot.sendMessage(chatId, `Please complete your payment: ${link.href}`);
@@ -190,6 +187,75 @@ function createPaypalPayment(plan, chatId) {
         }
     });
 }
+app.get('/confirmation', async (req, res) => {
+    const { paymentId } = req.query;  // Retrieve the paymentId from the query string
+    const chatId = Object.keys(users).find(chatId => users[chatId].paymentId === paymentId);
+
+    if (chatId) {
+        const userPlan = users[chatId].paymentPlan;
+        users[chatId].paymentStatus = true;  // Mark payment as completed
+        users[chatId].lastPaymentDate = new Date();
+
+        try {
+            // Create a Telegram group invite link valid for one user
+            const inviteLink = await bot.createChatInviteLink(groupId, {
+                member_limit: 1,
+                expire_date: Math.floor(Date.now() / 1000) + (60 * 60) // 1 hour expiry
+            });
+
+            // Render the confirmation page
+            res.send(`
+                <html>
+                    <head>
+                        <title>Payment Confirmation</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; }
+                            .container { max-width: 600px; margin: 0 auto; text-align: center; padding: 20px; }
+                            h1 { color: #4CAF50; }
+                            p { font-size: 18px; }
+                            a { display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>Payment Confirmed!</h1>
+                            <p>Thank you for your payment. You have subscribed to the <strong>${userPlan}</strong> plan.</p>
+                            <p>Click the button below to join the Telegram group.</p>
+                            <a href="${inviteLink.invite_link}" target="_blank">Join Group</a>
+                        </div>
+                    </body>
+                </html>
+            `);
+        } catch (error) {
+            console.error("Error creating invite link:", error);
+            res.status(500).send("Error generating invite link.");
+        }
+    } else {
+        res.status(400).send("Invalid payment or user not found.");
+    }
+});
+app.get('/cancel', (req, res) => {
+    res.send(`
+        <html>
+            <head>
+                <title>Payment Canceled</title>
+                <style>
+                    body { font-family: Arial, sans-serif; }
+                    .container { max-width: 600px; margin: 0 auto; text-align: center; padding: 20px; }
+                    h1 { color: #FF0000; }
+                    p { font-size: 18px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Payment Canceled</h1>
+                    <p>Unfortunately, your payment was not completed.</p>
+                    <p>Please try again or contact support for assistance.</p>
+                </div>
+            </body>
+        </html>
+    `);
+});
 
 cron.schedule('0 0 1 * *', () => {
   const now = new Date();
@@ -262,14 +328,4 @@ app.post('/confirmation', (req, res) => {
       
 
   res.status(200).send('OK');
-});
-
-
-app.get('/', (req, res) => {
-  res.send('Hello, World!');
-});
-
-// Start the server and listen on the specified port
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
 });
