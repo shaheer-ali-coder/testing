@@ -175,9 +175,14 @@ function createPaypalPayment(plan, chatId) {
         if (error) {
             console.error(error);
         } else {
-            const paymentId = payment.id; // Store the paymentId
-            users[chatId].paymentId = paymentId;
-            users[chatId].paymentPlan = plan.duration;
+            const paymentId = payment.id;
+            console.log(paymentId) // Store the paymentId
+if (paymentId) {
+    users[chatId].paymentId = paymentId;
+    users[chatId].paymentPlan = plan.duration;
+} else {
+    console.error('Payment ID not found, cannot proceed');
+}
 
             payment.links.forEach((link) => {
                 if (link.rel === 'approval_url') {
@@ -230,9 +235,8 @@ app.get('/confirmation', async (req, res) => {
             console.error("Error creating invite link:", error);
             res.status(500).send("Error generating invite link.");
         }
-    } else {
-        res.status(400).send("Invalid payment or user not found.");
-    }
+    } 
+    
 });
 app.get('/cancel', (req, res) => {
     res.send(`
@@ -329,3 +333,13 @@ app.post('/confirmation', (req, res) => {
 
   res.status(200).send('OK');
 });
+
+const port = 3000;
+
+// Create a basic route for the root URL ('/')
+app.get('/', (req, res) => {
+  res.send('Hello, World!');
+});
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+  });
