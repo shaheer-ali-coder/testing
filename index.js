@@ -192,40 +192,35 @@ if (paymentId) {
         }
     });
 }
+     
+
+const request = require('request'); // or use axios if you prefer
 app.get('/confirmation', async (req, res) => {
-    const { paymentId, PayerID } = req.query;  // Retrieve paymentId and PayerID from query
-
-    if (!paymentId || !PayerID) {
-        return res.status(400).send('Missing payment information.');
-    }
-
-    // Find the chatId by matching the paymentId
-    const chatId = Object.keys(users).find(chatId => users[chatId].paymentId === paymentId);
+    const { paymentId, PayerID } = req.query;  // Retrieve paymentId and PayerID from query string
+    const chatId = Object.keys(users).find(chatId => users[chatId].paymentId === paymentId && users[chatId].payerId === PayerID); // Use both paymentId and PayerID
 
     if (!chatId) {
-        return res.status(404).send('User not found.');
+        return res.redirect('/cancel');  // If no chatId found, redirect to cancel
     }
 
-    // Define the details to execute the payment
+    // Define PayPal payment execute object
     const execute_payment_json = {
-        "payer_id": PayerID,
-        "transactions": [{
-            "amount": {
-                "currency": "USD",
-                "total": users[chatId].paymentPlan.price
-            }
-        }]
+        "payer_id": PayerID,  // Required to complete the payment
     };
 
-    // Execute the payment via PayPal API
+    // Call PayPal to execute the payment
     paypal.payment.execute(paymentId, execute_payment_json, async (error, payment) => {
         if (error) {
-            console.error(error);
-            return res.status(500).send('Error executing payment.');
+            console.error(error.response);
+            return res.redirect('/cancel');  // If an error occurs, redirect to cancel
         } else {
+            // Check if the payment is approved
             if (payment.state === 'approved') {
-                // Payment is successful, now mark the user as paid
-                users[chatId].paymentStatus = true;
+                console.log('Payment successfully verified!');
+
+                // Update user information and create invite link
+                const userPlan = users[chatId].paymentPlan;
+                users[chatId].paymentStatus = true;  // Mark payment as completed
                 users[chatId].lastPaymentDate = new Date();
 
                 try {
@@ -251,7 +246,7 @@ app.get('/confirmation', async (req, res) => {
                             <body>
                                 <div class="container">
                                     <h1>Payment Confirmed!</h1>
-                                    <p>Thank you for your payment. You have subscribed to the <strong>${users[chatId].paymentPlan.duration}</strong> plan.</p>
+                                    <p>Thank you for your payment. You have subscribed to the <strong>${userPlan}</strong> plan.</p>
                                     <p>Click the button below to join the Telegram group.</p>
                                     <a href="${inviteLink.invite_link}" target="_blank">Join Group</a>
                                 </div>
@@ -262,12 +257,19 @@ app.get('/confirmation', async (req, res) => {
                     console.error("Error creating invite link:", error);
                     return res.status(500).send("Error generating invite link.");
                 }
+
             } else {
-                return res.status(400).send('Payment not approved.');
+                // If the payment is not approved, redirect to cancel
+                return res.redirect('/cancel');
             }
         }
     });
 });
+
+
+
+
+
 app.get('/cancel', (req, res) => {
     res.send(`
         <html>
